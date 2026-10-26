@@ -15,7 +15,7 @@ import (
 	"github.com/mustafagulturk/taktik-mesaj-gecidi/protocol"
 )
 
-func setup(t *testing.T, cfg chaos.Config) (*gateway.Server, string, *chaos.Proxy) {
+func setup(t testing.TB, cfg chaos.Config) (*gateway.Server, string, *chaos.Proxy) {
 	t.Helper()
 	srv := gateway.New(gateway.Config{IdleTimeout: 2 * time.Second})
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -37,7 +37,7 @@ func setup(t *testing.T, cfg chaos.Config) (*gateway.Server, string, *chaos.Prox
 	return srv, ln.Addr().String(), px
 }
 
-func run(t *testing.T, cfg client.Config) *client.Client {
+func run(t testing.TB, cfg client.Config) *client.Client {
 	t.Helper()
 	cfg.HeartbeatInterval = 200 * time.Millisecond
 	cfg.MinBackoff = 10 * time.Millisecond
@@ -53,7 +53,7 @@ func run(t *testing.T, cfg client.Config) *client.Client {
 	return c
 }
 
-func waitUnit(t *testing.T, srv *gateway.Server, id uint16) {
+func waitUnit(t testing.TB, srv *gateway.Server, id uint16) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

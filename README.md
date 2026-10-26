@@ -2,6 +2,12 @@
 
 [![ci](https://github.com/mustafagulturk/taktik-mesaj-gecidi/actions/workflows/ci.yml/badge.svg)](https://github.com/mustafagulturk/taktik-mesaj-gecidi/actions/workflows/ci.yml)
 
+> **English summary:** A Go server that encodes and decodes fixed bit-layout
+> binary tactical messages and distributes them to field units over TCP.
+> It survives corrupt packets, dropped connections and latency through frame
+> resynchronisation, ack/retransmit with duplicate suppression and a chaos
+> proxy test harness, and its codec is covered by native Go fuzz tests.
+
 Sabit bit düzenli ikili taktik mesajları (konum raporu, temas raporu, emir,
 serbest metin…) kodlayan/çözen ve bunları TCP üzerinden sahadaki birliklere
 dağıtan bir ağ geçidi sunucusu. Bozuk paketlere, kopan bağlantılara ve
@@ -35,10 +41,12 @@ Yalnızca Go standart kütüphanesi kullanılıyor, harici bağımlılık yok.
 - **Yavaş istemci izolasyonu** — her bağlantının kendi okuma/yazma
   goroutine'i ve yazma zaman aşımı var; okumayan bir birlik diğerlerini
   yavaşlatamıyor.
-- **En fazla bir kez teslim** — (kaynak, sıra no) çiftleri sunucu genelinde
-  TTL'li bir pencerede tutuluyor. İstemci ACK alamazsa aynı sıra numarasıyla
-  yeniden gönderiyor; bağlantı kopup yeniden kurulsa bile alıcı mesajı bir kez
-  görüyor.
+- **Teslim garantisi** — onaylı gönderilen bir mesaj, alıcının bağlantısı
+  açık kaldığı sürece alıcıya **tam olarak bir kez** ulaşır; alıcının
+  bağlantısı mesaj kuyruktayken koparsa mesaj kaybolabilir ama asla iki kez
+  teslim edilmez. Bunu iki parça sağlar: istemci ACK alamazsa aynı sıra
+  numarasıyla yeniden gönderir, ağ geçidi de (kaynak, sıra no) çiftlerini TTL'li
+  bir pencerede tutup tekrarları `DUPLICATE` ile onaylar ama yeniden iletmez.
 - **İki yönlü canlılık** — sunucu belirli süre geçerli çerçeve gelmeyen
   oturumu kapatıyor; istemci de heartbeat ACK'leri gelmezse sunucuyu ölü
   sayıp üstel geri çekilme + jitter ile yeniden bağlanıyor.
@@ -155,13 +163,42 @@ docker build -t tmg .
 docker run -p 7400:7400 -p 7401:7401 tmg
 ```
 
+## Ölçümler
+
+Intel Xeon @ 2.10 GHz, 4 çekirdek, Go 1.24, tek goroutine. Kendin üretmek için
+`make bench` ve `go test ./e2e -run '^$' -bench Delivery -benchtime 300x`.
+
+**Kodek** (26 baytlık konum raporu):
+
+| İşlem | Süre | Hız |
+|-------|------|-----|
+| Kodlama | 576 ns | ~1,7 milyon mesaj/sn |
+| Çözme (`Decode`, tam doğrulama + CRC) | 1,0 µs | ~1,0 milyon mesaj/sn |
+| Akıştan okuma (`Reader`, yeniden senkron dahil) | 0,9 µs/çerçeve | ~1,1 milyon mesaj/sn |
+
+**Uçtan uca teslim süresi** — gönderen kaos proxy'sinin arkasında, alıcı
+doğrudan bağlı; `Send` çağrısından mesajın alıcıya ulaşmasına kadar geçen süre,
+300 onaylı emir:
+
+| Ağ koşulu | p50 | p99 | Yeniden gönderim |
+|-----------|-----|-----|------------------|
+| Temiz (localhost) | 0,11 ms | 0,21 ms | 0 |
+| 20 ms ± 10 ms gecikme (her yön) | 41 ms | 58 ms | 0 |
+| + bayt başına %0,1 bit bozma, 1–7 baytlık parçalama | 56 ms | 257 ms | 8 |
+| + bağlantıyı ~1 sn'de bir RST ile koparma | 56 ms | 457 ms | 40 |
+
+Tüm senaryolarda 300 emrin hepsi alıcıya tam bir kez ulaştı; p99'daki artış
+CRC hatasıyla atılan çerçevelerin 200 ms ACK zaman aşımı sonunda yeniden
+gönderilmesinden ve yeniden bağlanma süresinden geliyor.
+
 ## Testler
 
 ```bash
 make test        # birim + entegrasyon + uçtan uca testler
 make race        # -race ile
 make fuzz        # tüm fuzz hedefleri (FUZZTIME=30s)
-make bench
+make bench       # kodek mikro ölçümleri
+go test ./e2e -run '^$' -bench Delivery -benchtime 300x   # kaos altında teslim süresi
 ```
 
 Fuzz hedefleri:
